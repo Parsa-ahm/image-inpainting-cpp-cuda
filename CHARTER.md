@@ -1,19 +1,26 @@
 # image-inpainting-cpp-cuda — Project Charter
 
-**Status:** charter draft, pre-code. This document is the single source of truth for *why* this
-project exists and *what done means*. If work ever drifts from this, either the work is wrong or
-this doc is wrong — reconcile before continuing. Do not lose the plot.
+**Status:** ACTIVE — Rung 0 in progress (build + GPU sanity green; data pipeline / PRNG pending).
+This document is the single source of truth for *why* this project exists and *what done means*.
+If work ever drifts from this, either the work is wrong or this doc is wrong — reconcile before
+continuing. Do not lose the plot.
 
-> Working name: `image-inpainting-cpp-cuda` (what it does). Not locked.
+> Name: `image-inpainting-cpp-cuda`. Locked 2026-08-25.
 
 ---
 
+## 0. The one sentence
+
+**Write, by hand, the full GPU training of a legit modern deep-learning model (a score-based
+generative model of faces) — every kernel, forward and backward — to understand exactly how the
+bits move on the GPU, and make it fast enough to stand next to cuBLAS/cuDNN.**
+
 ## 1. One-line summary
 
-Build, from first principles in C++/CUDA with zero ML frameworks, a **score-based / energy-based
-generative image model** — hand-written autodiff, a trained score network, and hand-written CUDA
-sampling kernels — and demonstrate it on **image inpainting** (image with a region removed →
-model fills it back in).
+From first principles in C++/CUDA with zero ML frameworks: a **noise-conditional score network**
+trained **entirely on the GPU with hand-written kernels** (forward + backward), sampled by
+hand-written CUDA Langevin kernels, and demonstrated on **face inpainting** (CelebA — erase a
+region, the model reconstructs it). The whole point is to own the GPU training path end to end.
 
 ## 2. Why this project exists (the purpose)
 
@@ -22,184 +29,193 @@ agents. Its job is to **erase any reasonable doubt that Parsa is a real ML engin
 three things most candidates cannot prove together:
 
 1. **Depth** — understands generative modeling from the score/energy up, not via `.fit()`.
-2. **Systems** — writes the CUDA kernels that are the performance-critical heart of sampling.
-3. **Frontier literacy** — can place the work correctly in the current field (score-based models,
-   diffusion, flow matching, consistency models) and talk about it fluently.
+2. **GPU systems** — has *personally written and optimized* the CUDA kernels for the entire
+   training and sampling path of a modern model. Knows how every bit moves on the GPU.
+3. **Frontier literacy** — places the work correctly in the current field (score-based models,
+   diffusion, flow matching, consistency models) and talks about it fluently.
 
 Extends the two existing pillars:
-- **pml-notes** (from-scratch reimplementation of Murphy's *Probabilistic ML*) — this is the
-  *generative* capstone of that same book.
-- **ml-jax-pytorch** (efficiency / systems-ML) — this adds the from-scratch GPU-kernel angle.
+- **pml-notes** (from-scratch Murphy *Probabilistic ML*) — the *generative* capstone of that book.
+- **ml-jax-pytorch** (efficiency / systems-ML) — this is the from-scratch GPU-kernels escalation.
 
 ## 3. Thesis (the defensible claim)
 
-> **Claim:** "I implemented the full stack of score-based generative modeling — autodiff, a trained
-> score network, annealed Langevin sampling, and conditional inpainting — from scratch in C++/CUDA
-> with no ML framework, including the CUDA kernels that run the sampler. I can explain and defend
-> every line and situate it in the current generative-ML field."
+> **Claim:** "I built a modern deep generative model — a score network trained by denoising score
+> matching and sampled with annealed Langevin — from scratch in C++/CUDA with no ML framework,
+> including hand-writing and optimizing every GPU kernel for **both forward and backward passes and
+> the full training loop**. I benchmarked my kernels against cuBLAS/cuDNN and can explain, defend,
+> and profile every line."
 
-This claim is about **demonstrated capability + understanding + a working artifact.** It does NOT
-depend on beating anyone's benchmark. That is deliberate (see §4). Lesson banked from the MoE
-project: **do not stake the project on a comparative thesis you cannot cleanly support.**
+About **demonstrated capability + understanding + a working, optimized artifact.** Does NOT depend
+on beating a published quality benchmark. Lesson banked from the MoE project: **do not stake the
+project on a comparative thesis you cannot cleanly support.**
 
 ## 4. Non-goals — what we explicitly do NOT claim
 
-- **NOT** state-of-the-art image quality. Small images, small model, from scratch. Samples should
-  be *recognizable*, not photorealistic.
-- **NOT** faster / more efficient than PyTorch. The from-scratch kernels are a *learning and
-  capability artifact*, not a performance-win claim.
+- **NOT** state-of-the-art image quality. Small faces, modest model, from scratch. Samples should be
+  *recognizable faces*, not photorealistic.
+- **NOT** beating cuBLAS/cuDNN. We *benchmark against* them and close the gap as far as possible;
+  matching NVIDIA's assembly-tuned kernels exactly is a research effort, not the bar (see §10, §13).
 - **NOT** a general ML framework. One model family, one demo, done well.
-
-> Note: an earlier draft framed this around thermodynamic computing / Extropic. Deliberately
-> dropped — it made the project read as an Extropic job application rather than a self-justifying
-> portfolio piece, and it invited defending a field outside our expertise. The work stands on its
-> own ML + systems merits. No thermodynamic/p-bit/quantum framing anywhere in the repo.
+- Earlier draft framed this around thermodynamic computing / Extropic — **deliberately dropped**
+  (read as an Extropic job application; invited defending a field outside our expertise). No
+  thermodynamic/p-bit/quantum framing anywhere in the repo.
 
 ## 5. Objectives (concrete, measurable)
 
-Done means all of these exist and are demonstrable:
-
-- **O1.** Reverse-mode **autodiff engine in C++** (tensors, ops, backprop), validated by numerical
-  gradient checking to a stated tolerance.
-- **O2.** A **hand-written counter-based PRNG** (Philox-style) usable identically on CPU and across
-  parallel GPU threads.
-- **O3.** A **trained score network** (MLP first, CNN upgrade) trained by our autodiff via
-  **denoising score matching** — no framework — that models the image distribution.
-- **O4.** Hand-written **CUDA kernels** implementing the sampler inner loop (network forward pass +
-  Langevin update), no cuBLAS/cuDNN, validated against the CPU reference.
-- **O5.** **Annealed Langevin sampling** producing recognizable unconditional samples.
-- **O6.** The **inpainting demo**: masked/corrupted image in, restored image out, via conditional
-  sampling (freeze observed pixels, sample the rest). The wow artifact.
-- **O7.** **Metrics + writeup**: full metric suite (below), and a writeup that derives the math,
-  explains score = −∇ energy and why sampling = MCMC on an energy landscape, and situates the work
-  against diffusion / flow matching / consistency models.
+- **O1.** A **hand-written counter-based PRNG** (Philox-style), identical on CPU and across parallel
+  GPU threads.
+- **O2.** A **GPU tensor + core-kernel library**: device memory, elementwise ops, and an **optimized
+  tiled SGEMM (matmul)** — shared memory, register blocking, coalesced/vectorized access —
+  benchmarked against cuBLAS.
+- **O3.** A **GPU reverse-mode autodiff**: forward + **backward** kernels for matmul, conv,
+  activations, and normalization, gradient-checked against a CPU finite-difference oracle.
+- **O4.** A **noise-conditional score network** (small CNN) — inputs image + noise level σ, outputs
+  the score — with the **entire training loop on the GPU** (DSM loss + optimizer, all hand-written).
+- **O5.** **Annealed Langevin sampling** in CUDA producing recognizable face samples.
+- **O6.** The **face inpainting demo**: erase a region → reconstruct via conditional sampling.
+- **O7.** **Optimization + metrics + writeup**: per-kernel benchmarks vs cuBLAS/cuDNN with a roofline
+  analysis, the full metric suite, and a writeup deriving the math and situating the work.
 
 ## 6. The ML spine (RESOLVED: continuous / score-based — Path B)
 
 > **Score-based generative models ⟺ energy-based models ⟺ MCMC sampling.**
 
-- The model learns a **score** = ∇ₓ log p(x) = **−∇ₓ E(x)** (same object, two names).
-- Trained by **denoising score matching** (Vincent 2011): predict the noise that was added; stable,
-  no partition-function estimation.
-- Sampling = **annealed Langevin dynamics** (Song & Ermon 2019): start from noise, repeatedly step
-  along the score plus a little noise, annealing the noise level down.
-- **Inpainting = conditional sampling:** run Langevin on the masked region while clamping the
-  observed pixels each step, so the fill stays consistent with what's visible.
+- The model learns a **score** = ∇ₓ log p(x) = **−∇ₓ E(x)**.
+- Trained by **denoising score matching** (Vincent 2011): noise x → x̃ = x + σε, regress the
+  network's score output onto the analytic target **(x − x̃)/σ² = −ε/σ**. Stable, no
+  partition-function estimation. (Equivalent up to scaling to DDPM ε-prediction — we output score.)
+- The score net is **noise-conditional** (takes σ) — required for annealed sampling over σ levels.
+- Sampling = **annealed Langevin dynamics** (Song & Ermon 2019): from noise, step along the score
+  plus a little noise, annealing σ down. *Unadjusted* Langevin (ULA), no Metropolis accept/reject.
+- **Inpainting = conditional sampling:** run Langevin on the erased region while clamping observed
+  pixels each step.
 
-Concepts owned by end of project (interview surface): score matching & denoising score matching ·
-Langevin dynamics & detailed balance · forward/reverse diffusion & noise schedules (DDPM) ·
-score-based SDEs · the EBM ↔ score equivalence · and *situated* knowledge of flow matching /
-rectified flow and consistency models.
+Concepts owned by the end: score matching & DSM · Langevin (ULA vs MALA, detailed balance) ·
+forward/reverse diffusion & noise schedules (DDPM) · score-based SDEs · EBM ↔ score equivalence ·
+and *situated* knowledge of flow matching / rectified flow and consistency models. Plus the GPU
+side: memory coalescing, shared-memory tiling, register blocking, occupancy, kernel fusion,
+roofline/arithmetic intensity.
 
 ## 7. The path (build ladder — each rung is shippable)
 
-**Rungs 0–5 are the 3–4 week project. Rung 6 finishes it. Rung 4 (CNN) and beyond raise the
-ceiling; if time runs short, ship at Rung 3 + a simple inpainting pass and mark the rest future
-work.** Model architecture: **MLP-first to get the pipeline green, upgrade to a small CNN for
-quality.** Training stays on CPU autodiff; **the CUDA flex is the sampler** (network forward pass +
-Langevin update as hand-written kernels).
+Everything the model does runs on the **GPU** and is **written by Parsa**. CPU code exists only as
+Claude's test oracle (see §8). MNIST-grayscale is a fast *correctness rig* for early rungs; **CelebA
+32×32 (grayscale → RGB, then 64×64 if time) is the real target.**
 
-- **Rung 0 — Scaffold.** CMake + CUDA build, image I/O (PPM / single-header writer), MNIST loader,
-  hand-written Philox PRNG (CPU + device). *Artifact:* builds; loads and re-saves a dataset image;
-  PRNG passes basic statistical checks.
-- **Rung 1 — Autodiff.** Reverse-mode autodiff in C++ (CPU). *Artifact:* gradient check passes.
-- **Rung 2 — Trained score net (MLP).** Denoising score matching on grayscale MNIST via our
-  autodiff. *Artifact:* loss curve descends; predicted scores match finite-difference on held-out
-  samples.
-- **Rung 3 — Sampling + CUDA.** Annealed Langevin sampler → unconditional generation. Move the
-  sampler inner loop to **hand-written CUDA kernels**; validate GPU vs CPU. *Artifact:* recognizable
-  generated digits; GPU sampler matches CPU. **← ML floor; quality risk starts here.**
-- **Rung 4 — CNN upgrade.** Replace MLP score net with a small CNN for quality. *Artifact:* visible
-  quality jump.
-- **Rung 5 — Inpainting.** Conditional sampling with clamped observed pixels. *Artifact:* the
-  before/after fill-in-the-hole demo. **← the wow.**
-- **Rung 6 — Metrics + writeup.** Full metric suite + the document from O7. *Artifact:* a
-  README/writeup a senior eng or researcher would accept.
+- **Rung 0 — Scaffold.** CMake+CUDA build (✓ builds, reports the GPU); CelebA download+resize
+  (Claude's Python data-prep) → simple binary blob; C++ loader; hand-written Philox PRNG.
+  *Artifact:* builds; loads and re-saves a face image; PRNG passes KAT + statistical checks.
+- **Rung 1 — GPU core kernels.** Device tensor, elementwise ops, and the **optimized tiled SGEMM**.
+  *Artifact:* matmul matches the CPU oracle; benchmark vs cuBLAS (GFLOP/s, % of cuBLAS). **← systems
+  floor; a real standalone flex on its own.**
+- **Rung 2 — GPU autodiff.** Forward + backward kernels for the ops the model needs (matmul, conv,
+  activations, norm). *Artifact:* gradient check passes against CPU finite-difference oracle.
+- **Rung 3 — GPU training.** Noise-conditional CNN + DSM loss + optimizer, full loop on GPU.
+  Validate on MNIST-gray (fast), then train CelebA-32 gray. *Artifact:* loss descends; recognizable
+  face samples. **← ML floor; quality risk starts here.**
+- **Rung 4 — Sampling.** Annealed Langevin sampling kernels → unconditional face generation.
+  *Artifact:* a grid of generated faces.
+- **Rung 5 — Inpainting.** Conditional sampling with clamped observed pixels; upgrade to RGB / 64×64
+  if time. *Artifact:* the before/after face-reconstruction demo. **← the wow.**
+- **Rung 6 — Optimize + metrics + writeup.** Profile and push kernels toward library-competitive;
+  roofline; FID/PSNR/SSIM; benchmark vs cuBLAS/cuDNN; the writeup. *Artifact:* a repo a senior eng or
+  researcher would accept.
 
-## 8. Tools, constraints, and boundaries
+## 8. Collaboration model (STRICT — this is how we work)
 
-**Stack:** C++17 host + hand-written CUDA kernels. `nvcc`, CMake. Real NVIDIA GPU + CUDA available.
+**Parsa writes 100% of the implementation.** Every line of C++/CUDA that is the model, the kernels,
+the autodiff, the training loop, and the sampler is his — he writes the **GPU** code, not CPU code.
+The whole point is that he can produce it himself and therefore understands it.
 
-**Zero ML frameworks** for the learning core (no PyTorch/JAX/TF/cuDNN/cuBLAS). Autodiff, model,
-training loop, PRNG, and sampling kernels are all hand-written. This is the flex.
+**Claude does NOT show implementation code for Parsa's parts.** Claude's job:
+- **Explain the concept** and the math deeply enough that Parsa can derive the implementation.
+- **Define precise task specs**: inputs/outputs, shapes, invariants, numerical targets, edge cases —
+  *what* the kernel/function must do and how to reason about it, never *the code that does it*.
+- **Write the tests** and a **CPU reference oracle** inside the tests (the oracle validates his GPU
+  kernels; naive CPU reference math is fine — it never reveals the optimized GPU technique).
+- Handle **build config, data-prep scripts, plotting/benchmark harnesses, reviews**.
+- **Optimize together:** once Parsa has a correct kernel, Claude and Parsa profile and tune it as a
+  pair — here Claude may discuss specific techniques and diffs, because now it's optimization of
+  *his* working code, not handing him the solution.
 
-**From-scratch boundary (decided, do not relitigate):**
-- **Core = from scratch, no libraries:** autodiff, tensor math, score model, training, PRNG,
-  Langevin sampling, CUDA kernels.
-- **Allowed thin non-ML utilities:** CMake; a single-header image writer or raw PPM; the C++
-  standard library; CUDA runtime (kernel launch / memory only — not cuBLAS/cuDNN).
-- **Visualization / benchmarking:** thin Python + matplotlib (or gnuplot) may render charts and
-  stitch demo GIFs. Plotting is not the ML and is not part of the from-scratch claim.
-- **Evaluation-only exception:** one external **pretrained** model (Inception) is permitted **solely
-  to compute FID** for evaluation. It never touches the model, training, or sampling.
+Performance bar: **fully optimized — apply every standard technique and benchmark against
+cuBLAS/cuDNN.** Realistic target: within a documented factor of the libraries (stretch: match).
 
-**Working conventions (spirit inherited from pml-notes):** Parsa writes the implementation (he is
-learning; that is the point). Claude writes tests / gradient-check + kernel-correctness harnesses /
-scaffolds / reviews / build config / conventions — not the core impl.
+## 9. Boundaries (from-scratch line — decided, do not relitigate)
 
-## 9. Dataset
+- **Core = from scratch, no libraries:** PRNG, tensor math, all GPU kernels (fwd+bwd), autodiff,
+  training loop, optimizer, Langevin sampling.
+- **Allowed thin non-ML utilities:** CMake; single-header image writer or raw PPM; the C++ standard
+  library; CUDA runtime (launch/memory) — **not cuBLAS/cuDNN** (except as a *benchmark reference* to
+  measure against, never called in the model path).
+- **cuRAND** not used — PRNG is hand-written. **cuBLAS/cuDNN** appear only in the benchmark harness.
+- **Data-prep + plotting** may be thin Python (resize CelebA, render charts/GIFs). Not ML, not part
+  of the from-scratch claim.
+- **Evaluation-only exception:** one external **pretrained** Inception, solely to compute **FID**.
+  Never touches model/training/sampling.
 
-- **Primary: MNIST** (28×28, grayscale). Safest recognizable target.
-- **Optional swap: Fashion-MNIST** for a cooler final recording (same size/difficulty).
+**Stack:** C++17 host + hand-written CUDA. Dev box: **RTX 2070 SUPER (`sm_75`, 8 GB, 40 SMs)**, CUDA
+12.0 (`nvcc`), CMake ≥ 3.24, host compiler **g++-12** (CUDA 12.0 rejects g++-13).
 
 ## 10. Metrics (track everything)
 
-- **Training:** loss curves, gradient norms, per-layer stats.
-- **Sampler health:** score-magnitude / energy over steps, autocorrelation, mixing diagnostics.
-- **Inpainting fidelity vs ground truth:** PSNR, SSIM, MSE (all hand-coded).
-- **Sample realism:** our own small classifier (trained in C++) scoring generated samples; **plus
-  FID** via the eval-only pretrained Inception.
-- **Eyeball:** sample grids and before/after inpainting panels.
+- **Kernel performance (central):** GFLOP/s and **% of cuBLAS/cuDNN** per kernel; roofline /
+  arithmetic-intensity plot; occupancy; before/after each optimization.
+- **Training:** loss curves, gradient norms, per-layer stats, step time / throughput.
+- **Sampler health:** score magnitude over σ levels, autocorrelation, mixing.
+- **Inpainting fidelity vs ground truth:** PSNR, SSIM, MSE (hand-coded).
+- **Sample realism:** our own small classifier scoring samples; **FID** via the eval-only Inception.
+- **Eyeball:** face sample grids and before/after inpainting panels.
 
-## 11. Showcase pieces (what non-technical people see)
+## 11. Showcase pieces
 
-- **Inpainting / restoration** — primary wow ("I hid part of the picture and it filled it back in").
-- **Free generation** — grid of samples the model dreamed up.
-- **Metrics dashboard** — the credibility layer for technical readers.
+- **Face inpainting** — primary wow ("erased half the face, the model rebuilt it").
+- **Generated-face grid** — the model dreaming up faces.
+- **Kernel-vs-cuBLAS performance charts + roofline** — the credibility layer proving the GPU work is
+  real and optimized, not a slow toy.
 
 ## 12. Success criteria (definition of done)
 
 - All of O1–O7 satisfied.
 - Every rung's artifact reproducible from a clean clone with documented commands.
-- Parsa can, cold, explain any component and the §6 equivalence, and place the work against
-  diffusion / flow matching / consistency models.
+- Parsa can, cold, explain and profile any kernel, derive the §6 math, and place the work in the
+  field.
+- Kernels benchmarked vs cuBLAS/cuDNN with the gap measured and explained (not necessarily closed).
 - Writeup passes: "a senior ML engineer or researcher would accept this as real."
-- **Timebox 3–4 weeks.** If short on time, ship at Rung 3 + a basic inpainting pass with an honest
-  "future work" section — never ship a broken higher rung.
+- **Timebox: aim ~4–5 weeks to a strong Rung 5; the RGB/64×64 + full optimization pass may run
+  longer.** If time is short, ship at Rung 3 (trained + recognizable faces) with honest future work —
+  never ship a broken higher rung.
 
 ## 13. Risks and mitigations
 
-- **R1 — Scope vs timebox.** Aggressive while learning. *Mitigation:* rung ladder with a shippable
-  floor; CUDA effort concentrated in the sampler; training stays CPU with a small net + small images.
-- **R2 — Sample quality underwhelms.** *Mitigation:* denoising score matching is stable (no
-  partition function); MLP → CNN upgrade path; lead the demo with inpainting (constrained by
-  observed pixels, looks good more easily than free generation).
-- **R3 — CUDA training rabbit hole.** *Mitigation:* explicit decision — CUDA flex = sampler, not
-  trainer. Train on CPU. Revisit only if ahead of schedule.
-- **R4 — Losing the plot (the MoE failure mode).** *Mitigation:* this charter; §3 thesis and §4
-  non-goals are re-read before any writeup work.
+- **R1 — Scope/timebox.** GPU training from scratch, written solo while learning, is big.
+  *Mitigation:* rung ladder with shippable floors (Rung 1 systems flex, Rung 3 ML floor); MNIST rig
+  before CelebA; grayscale before RGB.
+- **R2 — Sample quality.** *Mitigation:* DSM is stable; faces are a smooth single-domain manifold
+  (more learnable than CIFAR at small scale); lead with inpainting (constrained → looks good easier).
+- **R3 — Optimization bar is a trap if taken as "equal cuBLAS."** *Mitigation:* §10 treats it as a
+  measured goal with documented gap, not a pass/fail gate. Within ~1.5–2× is excellent.
+- **R4 — GPU-autodiff/backward-kernel difficulty.** Backprop kernels are the hardest part.
+  *Mitigation:* rigorous gradient checks vs CPU oracle at every op before composing them.
+- **R5 — Losing the plot (the MoE failure mode).** *Mitigation:* this charter; re-read §3/§4 before
+  any writeup.
 
-**Open decisions to confirm before Rung 0:**
-1. Project name (`image-inpainting-cpp-cuda` vs `ml-cpp-cuda` vs other).
-2. Evaluation: the one eval-only pretrained model for FID is acceptable. (Confirmed.)
+## 14. References
 
-## 14. References (papers this project stands on)
-
-- Hyvärinen 2005 — Score Matching.
-- Vincent 2011 — Denoising Score Matching.
-- Welling & Teh 2011 — Stochastic Gradient Langevin Dynamics.
-- Song & Ermon 2019; Song et al. 2021 — Score-based generative modeling / annealed Langevin / SDEs.
-- Ho, Jain, Abbeel 2020 — DDPM (situating).
-- Lipman et al. 2022; Liu et al. 2022 — Flow Matching / Rectified Flow (situating).
-- Song et al. 2023 — Consistency Models (situating).
-- Murphy — *Probabilistic Machine Learning: Advanced Topics* (the pml-notes book): EBMs, MCMC,
-  diffusion chapters.
+- Hyvärinen 2005 — Score Matching. · Vincent 2011 — Denoising Score Matching. · Welling & Teh 2011 —
+  SGLD. · Song & Ermon 2019; Song et al. 2021 — score-based modeling / annealed Langevin / SDEs. ·
+  Ho, Jain, Abbeel 2020 — DDPM (situating). · Lipman 2022; Liu 2022 — Flow Matching / Rectified Flow
+  (situating). · Song 2023 — Consistency Models (situating). · Salmon et al. 2011 — Philox PRNG. ·
+  Murphy — *PML: Advanced Topics* (pml-notes book): EBMs, MCMC, diffusion.
+- GPU: NVIDIA CUDA C++ Programming/Best-Practices guides; a tiled-SGEMM optimization walkthrough as
+  the perf reference target.
 
 ## 15. What Parsa will be able to say afterward (the payoff)
 
-- "I wrote reverse-mode autodiff, a counter-based PRNG, and the CUDA sampling kernels by hand; no
-  framework touched the core."
-- "I can derive why the score is the negative energy gradient, and why sampling is MCMC on an
-  energy landscape."
-- "My inpainting demo is conditional annealed-Langevin sampling — here's how it relates to DDPM and
-  why frontier labs moved to flow matching."
+- "I hand-wrote and optimized every CUDA kernel — forward *and* backward — for the full training of a
+  modern score-based generative model. No framework touched the core."
+- "I benchmarked my SGEMM and conv against cuBLAS/cuDNN and can show you the roofline and where the
+  gap is and why."
+- "My face-inpainting demo is conditional annealed-Langevin sampling — here's how it relates to DDPM
+  and why frontier labs moved to flow matching."
